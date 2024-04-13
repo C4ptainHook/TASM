@@ -2,8 +2,10 @@
 .stack 200h
 .data
 input_buffer db 6,?,6 dup('?')
+cleaner db 'Result: ','$'
 number dw 0
 input_sign_flag db 0
+overflow_msg db 'You entered too large value [Max value 32752]',13,10,'$'
 
 .code
 main proc
@@ -14,6 +16,11 @@ call input
 call clear_mr
 mov bx,15
 add number,bx
+mov ax,number
+mov ah, 9
+mov dx,offset cleaner
+int 21h
+call clear_mr
 call output
 .exit
 main endp
@@ -51,6 +58,7 @@ input proc
  xor cx,cx ;clear counter just for sake
  ;filling stack in preparation
  lea di,input_buffer[2]
+ mov cl,input_buffer[1]
  ;check for minus
  mov bl,ds:[di]
  cmp bl,'-'
@@ -98,6 +106,13 @@ pow_break:
  mov bx,ax 
 skip_mul:
  add number,bx
+ mov ax,number
+ jnc skip_ovf_throw
+ xor ax,ax
+ mov ah,9 
+ mov dx,offset overflow_msg 
+ int 21h 
+skip_ovf_throw:
  inc dl ;inc to reflect times 10 x 10 (starts from -1 works from 1)
  loop transform
  ;treat as neg
@@ -113,6 +128,7 @@ clear_mr proc ;clear ax,bx,cx,dx
   xor bx,bx
   xor cx,cx
   xor dx,dx
+  xor di,di
   ret
 clear_mr endp
 end main
