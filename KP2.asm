@@ -51,6 +51,13 @@ input proc
  xor cx,cx ;clear counter just for sake
  ;filling stack in preparation
  lea di,input_buffer[2]
+ ;check for minus
+ mov bl,ds:[di]
+ cmp bl,'-'
+ jne parse
+ inc input_sign_flag
+ inc di
+ dec input_buffer[1]
  mov cl,input_buffer[1]
 parse:
  mov bl,ds:[di]
@@ -93,6 +100,12 @@ skip_mul:
  add number,bx
  inc dl ;inc to reflect times 10 x 10 (starts from -1 works from 1)
  loop transform
+ ;treat as neg
+ mov al,input_sign_flag
+ test al,al
+ jz skip_neg
+ neg number
+skip_neg:
  ret
 input endp
 clear_mr proc ;clear ax,bx,cx,dx
