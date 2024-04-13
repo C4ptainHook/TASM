@@ -2,7 +2,8 @@
 .stack 200h
 .data
 input_buffer db 6,?,6 dup('?')
-number dw 0,? 
+number dw 0
+input_sign_flag db 0
 
 .code
 main proc
@@ -44,13 +45,13 @@ disp:
 
 input proc
  xor ax,ax
- mov ah,10
- mov dx,offset input_buffer
- int 21h 
- xor cx,cx
- mov cl,input_buffer[1]
+ mov ah,10 ;prepare 10-th function
+ mov dx,offset input_buffer ;point to buffer to fill later
+ int 21h ;call 21 interruption that accepts input
+ xor cx,cx ;clear counter just for sake
  ;filling stack in preparation
  lea di,input_buffer[2]
+ mov cl,input_buffer[1]
 parse:
  mov bl,ds:[di]
  push bx
@@ -59,41 +60,38 @@ parse:
  ;reset counter
  mov cl,input_buffer[1]
  ;getting a number
- xor bx,bx
+ mov dl,-1 ;starting counter for pow of 10
 transform:
  xor ax,ax ;clear ax
  xor bx,bx ;clear bx
  ;pow
- mov dh,dl
- mov bl,10
- mov al,10
- test dh,dh
- jz pow_break 
+ mov dh,1 ;marker to start mul from 1
+ cmp dl,dh ;compare dl counter with marker (dl - dh)
+ mov al,10 ;anyway put 10 to make 10^1, check for 0 lower in code
+ js pow_break
+ ;prepare for pow
+ mov bl,10 ;place 10 in bx for pow
+ mov dh,dl ;turn dh into count-down 1 = 1 mul 10x10
 exp:
- push dx
- mul bx
- pop dx
- dec dh
- test dh,dh
+ push dx ;save dl exp value
+ mul bx ;mul bx by ax
+ pop dx ;return saved values
+ dec dh 
+ test dh,dh ;test if dh zero
  jnz exp
- push dx
- xor dx,dx
- div bx
- pop dx
 pow_break:
  ;/pow
- xor dh,dh
  pop bx ;get input from stack in reverse
  sub bl,'0' ;get number from char
- test dl,dl ;checking if this was 10^0
- jz skip_mul
- push dx ;after next mul dl = 0000
+ test dl,dl ;checking if this was 10^0 (because start from -1)
+ js skip_mul
+ push dx ;again save dl
  mul bx ;use bx to mul not by al but by ax
- pop dx
- mov bx,ax
+ pop dx ;return saved dl
+ mov bx,ax 
 skip_mul:
  add number,bx
- inc dl ;incrementing the next power for 10
+ inc dl ;inc to reflect times 10 x 10 (starts from -1 works from 1)
  loop transform
  ret
 input endp
