@@ -5,8 +5,12 @@ input_buffer db 6,?,6 dup('?')
 cleaner db 'Result: ','$'
 number dw 0
 input_sign_flag db 0
-input_err_flag db 0
+input_ovf_flag db 0
+input_zero_flag db 0
+input_symbol_flag db 0
 overflow_msg db 'You entered too large value [Max value 32752]',13,10,'$'
+zero_msg db 'Number can not start with zero',13,10,'$'
+symbol_msg db 'Input contains symbols. Not able to proceed',13,10,'$'
 
 .code
 main proc
@@ -14,19 +18,19 @@ mov ax, @data
 mov ds, ax
 push ds
 call input
-;call clear_mr
-;mov al,input_err_flag
-;test al,al
-;jnz catch
-;mov bx,15
-;add number,bx
-;mov ax,number
-;mov ah, 9
-;mov dx,offset cleaner
-;int 21h
-;call clear_mr
-;call output
-;catch:
+call clear_mr
+mov al,input_ovf_flag
+test al,al
+jnz catch
+mov bx,15
+add number,bx
+mov ax,number
+mov ah, 9
+mov dx,offset cleaner
+int 21h
+call clear_mr
+call output
+catch:
 ;
 .exit
 main endp
@@ -68,16 +72,68 @@ input proc
  ;check for minus
  mov bl,ds:[di]
  cmp bl,'-'
- jne parse
+ jne check_ovf
  inc input_sign_flag
  inc di
  dec input_buffer[1]
  mov cl,input_buffer[1]
+ ;check for too large value
+check_ovf:
+ cmp input_buffer[1], 5
+ jb check_first_zero
+ mov bl,ds:[di]
+ cmp bl,'4'
+ jb check_first_zero
+ xor ax,ax
+ mov ah,9 
+ mov dx,offset overflow_msg 
+ int 21h 
+ inc input_ovf_flag
+ ret
+check_first_zero:
+ cmp input_buffer[1], 1
+ je parse
+ mov bl,ds:[di]
+ cmp bl,'0'
+ jne parse
+ xor ax,ax
+ mov ah,9 
+ mov dx,offset zero_msg 
+ int 21h 
+ inc input_zero_flag
+ ret
 parse:
+ mov bl,ds:[di]
+ cmp bl, '0' 
+ jb not_a_number 
+ cmp bl, '9' 
+ ja not_a_number 
+ inc di
+ loop parse
+ mov al,input_symbol_flag
+ test al,al
+ jz parse_push_prep
+ not_a_number:
+ xor ax,ax
+ mov ah,9 
+ mov dx,offset symbol_msg 
+ int 21h 
+ inc input_symbol_flag
+ mov al,input_symbol_flag
+ ret
+ ;reset counter
+parse_push_prep:
+ mov cl,input_buffer[1]
+ lea di,input_buffer[2]
+ mov bl,input_sign_flag
+ test bl,bl
+ jz parse_push
+ inc di
+parse_push:
  mov bl,ds:[di]
  push bx
  inc di
- loop parse
+ loop parse_push
  ;reset counter
  mov cl,input_buffer[1]
  ;getting a number
@@ -108,7 +164,6 @@ pow_break:
  js skip_mul
  push dx ;again save dl
  mul bx ;use bx to mul not by al but by ax
- jc overflow_pr
  pop dx ;return saved dl
  mov bx,ax 
 skip_mul:
@@ -119,15 +174,14 @@ skip_mul:
  sub bx,ax
  ;end of sign coersion
  jle skip_ovf_throw
-overflow_pr:
  xor ax,ax
  mov ah,9 
  mov dx,offset overflow_msg 
  int 21h 
- inc input_err_flag
- mov al,input_err_flag
+ inc input_ovf_flag
+ mov al,input_ovf_flag
  test al,al
- jnz exit
+ ret
 skip_ovf_throw:
  inc dl ;inc to reflect times 10 x 10 (starts from -1 works from 1)
  loop transform
@@ -137,7 +191,6 @@ skip_ovf_throw:
  jz skip_neg
  neg number
 skip_neg:
-exit:
  ret
 input endp
 clear_mr proc ;clear ax,bx,cx,dx
