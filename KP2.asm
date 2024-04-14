@@ -5,6 +5,7 @@ input_buffer db 6,?,6 dup('?')
 cleaner db 'Result: ','$'
 number dw 0
 input_sign_flag db 0
+input_err_flag db 0
 overflow_msg db 'You entered too large value [Max value 32752]',13,10,'$'
 
 .code
@@ -13,15 +14,20 @@ mov ax, @data
 mov ds, ax
 push ds
 call input
-call clear_mr
-mov bx,15
-add number,bx
-mov ax,number
-mov ah, 9
-mov dx,offset cleaner
-int 21h
-call clear_mr
-call output
+;call clear_mr
+;mov al,input_err_flag
+;test al,al
+;jnz catch
+;mov bx,15
+;add number,bx
+;mov ax,number
+;mov ah, 9
+;mov dx,offset cleaner
+;int 21h
+;call clear_mr
+;call output
+;catch:
+;
 .exit
 main endp
 
@@ -102,16 +108,26 @@ pow_break:
  js skip_mul
  push dx ;again save dl
  mul bx ;use bx to mul not by al but by ax
+ jc overflow_pr
  pop dx ;return saved dl
  mov bx,ax 
 skip_mul:
  add number,bx
+ ;without this section weird stuff is happening with of in cmp (possibly sign trouble)
  mov ax,number
- jnc skip_ovf_throw
+ xor bx,bx
+ sub bx,ax
+ ;end of sign coersion
+ jle skip_ovf_throw
+overflow_pr:
  xor ax,ax
  mov ah,9 
  mov dx,offset overflow_msg 
  int 21h 
+ inc input_err_flag
+ mov al,input_err_flag
+ test al,al
+ jnz exit
 skip_ovf_throw:
  inc dl ;inc to reflect times 10 x 10 (starts from -1 works from 1)
  loop transform
@@ -121,6 +137,7 @@ skip_ovf_throw:
  jz skip_neg
  neg number
 skip_neg:
+exit:
  ret
 input endp
 clear_mr proc ;clear ax,bx,cx,dx
