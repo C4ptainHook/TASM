@@ -1,41 +1,73 @@
 .model small
+
 .stack 200h
-.data
-input_buffer db 6,?,6 dup('?')
-cleaner db 'Result: ','$'
+
+.data 
+input_buffer db 7,?,7 dup('?')
+result db 'Result: ','$'
 number dw 0
 input_sign_flag db 0
 input_ovf_flag db 0
 input_zero_flag db 0
+input_empty_flag db 0
 input_symbol_flag db 0
-overflow_msg db 'You entered too large value [Max value 32752]',13,10,'$'
+welcome_msg db 13,10,'Enter a new number [-32752 <= value <= 32752]',13,10,'$'
+continue_msg db 13,10,'Try again. Press 1 = Yes, Else = No',13,10,'$'
+overflow_msg db 'You entered value out of bounds[-32752 <= value <= 32752]',13,10,'$'
+empty_msg db 'You input nothing',13,10,'$'
 zero_msg db 'Number can not start with zero',13,10,'$'
 symbol_msg db 'Input contains symbols. Not able to proceed',13,10,'$'
 
-.code
+.code 
 main proc
+restart:
 mov ax, @data
 mov ds, ax
 push ds
+call clear_restart_mr
+mov ah,9 
+mov dx,offset welcome_msg 
+int 21h 
 call input
-call clear_mr
+;
+mov al,input_zero_flag
+cmp al,0
+jne catch
 mov al,input_ovf_flag
-test al,al
-jnz catch
+cmp al,0
+jne catch
+mov al,input_symbol_flag
+cmp al,0
+jne catch
+mov al,input_empty_flag
+cmp al,0
+jne catch
+;
+call clear_mr ;clean
+;
 mov bx,15
 add number,bx
-mov ax,number
+;
+call clear_mr ;clean
+;
 mov ah, 9
-mov dx,offset cleaner
+mov dx,offset result
 int 21h
-call clear_mr
+;
 call output
 catch:
+mov ah,9 
+mov dx,offset continue_msg 
+int 21h 
 ;
+mov ah,01h 
+int 21h 
+cmp al,'1'
+je restart
 .exit
 main endp
 
-output proc
+output proc stdcall uses ax,bx,cx,dx
  mov bx, number
  or bx, bx ;set sf if neg
  jns skip_minus
@@ -66,43 +98,27 @@ input proc
  mov dx,offset input_buffer ;point to buffer to fill later
  int 21h ;call 21 interruption that accepts input
  xor cx,cx ;clear counter just for sake
+ cmp input_buffer[1],0
+ jne input_exist
+ mov ah,9 ;prepare 10-th function
+ mov dx,offset empty_msg ;point to buffer to fill later
+ int 21h ;call 21 interruption that accepts input
+ inc input_empty_flag
+ ret
  ;filling stack in preparation
+input_exist:
  lea di,input_buffer[2]
  mov cl,input_buffer[1]
  ;check for minus
  mov bl,ds:[di]
  cmp bl,'-'
- jne check_ovf
+ jne parse
  inc input_sign_flag
  inc di
  dec input_buffer[1]
  mov cl,input_buffer[1]
  ;check for too large value
-check_ovf:
- cmp input_buffer[1], 5
- jb check_first_zero
- mov bl,ds:[di]
- cmp bl,'4'
- jb check_first_zero
- xor ax,ax
- mov ah,9 
- mov dx,offset overflow_msg 
- int 21h 
- inc input_ovf_flag
- ret
-check_first_zero:
- cmp input_buffer[1], 1
- je parse
- mov bl,ds:[di]
- cmp bl,'0'
- jne parse
- xor ax,ax
- mov ah,9 
- mov dx,offset zero_msg 
- int 21h 
- inc input_zero_flag
- ret
-parse:
+ parse:
  mov bl,ds:[di]
  cmp bl, '0' 
  jb not_a_number 
@@ -121,14 +137,39 @@ parse:
  inc input_symbol_flag
  mov al,input_symbol_flag
  ret
- ;reset counter
 parse_push_prep:
  mov cl,input_buffer[1]
  lea di,input_buffer[2]
  mov bl,input_sign_flag
  test bl,bl
- jz parse_push
+ jz check_first_zero
  inc di
+check_first_zero:
+ cmp input_buffer[1], 1
+ je check_ovf
+ mov bl,ds:[di]
+ cmp bl,'0'
+ jne check_ovf
+ xor ax,ax
+ mov ah,9 
+ mov dx,offset zero_msg 
+ int 21h 
+ inc input_zero_flag
+ ret
+ ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+check_ovf:
+ cmp input_buffer[1], 5
+ jb parse_push
+ mov bl,ds:[di]
+ cmp bl,'4'
+ jb parse_push
+ xor ax,ax
+ mov ah,9 
+ mov dx,offset overflow_msg 
+ int 21h 
+ inc input_ovf_flag
+ ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+ ret
 parse_push:
  mov bl,ds:[di]
  push bx
@@ -167,25 +208,27 @@ pow_break:
  pop dx ;return saved dl
  mov bx,ax 
 skip_mul:
- add number,bx
- ;without this section weird stuff is happening with of in cmp (possibly sign trouble)
  mov ax,number
- xor bx,bx
- sub bx,ax
+ add ax,bx
+ ;without this section weird stuff is happening with of in cmp (possibly sign trouble)
+ cmp ax,32752
  ;end of sign coersion
- jle skip_ovf_throw
+ jbe skip_ovf_throw
+ inc input_ovf_flag
+skip_ovf_throw:
+ add number,ax
+ inc dl ;inc to reflect times 10 x 10 (starts from -1 works from 1)
+ loop transform
+ mov al, input_ovf_flag
+ test al,al
+ jz neg_processing
  xor ax,ax
  mov ah,9 
  mov dx,offset overflow_msg 
  int 21h 
- inc input_ovf_flag
- mov al,input_ovf_flag
- test al,al
  ret
-skip_ovf_throw:
- inc dl ;inc to reflect times 10 x 10 (starts from -1 works from 1)
- loop transform
  ;treat as neg
+neg_processing:
  mov al,input_sign_flag
  test al,al
  jz skip_neg
@@ -201,4 +244,14 @@ clear_mr proc ;clear ax,bx,cx,dx
   xor di,di
   ret
 clear_mr endp
+
+clear_restart_mr proc 
+ call clear_mr ;clean
+ mov number,ax
+ mov input_ovf_flag,al 
+ mov input_zero_flag,al 
+ mov input_symbol_flag,al
+ mov input_empty_flag,al
+ ret
+clear_restart_mr endp
 end main
