@@ -16,13 +16,15 @@ input_ovf_flag db 0
 input_zero_flag db 0
 input_empty_flag db 0
 input_symbol_flag db 0
+case_fail_flag db 0
 enter_x_msg db 13,10,'Enter a X number [-32768 <= value <= 32767]',13,10,'$'
 enter_y_msg db 13,10,'Enter a Y number [-32768 <= value <= 32767]',13,10,'$'
 continue_msg db 13,10,'Try again. Press 1 = Yes, Else = No',13,10,'$'
-overflow_msg db 'You entered value out of bounds [-32768 <= value <= 32767]',13,10,'$'
+overflow_msg db 'WARNING You entered value out of bounds [-32768 <= value <= 32767]',13,10,'$'
+case_fail_msg db 'WARNING Value out of bounds [-32768 <= value <= 32767] appeared in calculations',10,'Consider another input values...',13,10,'$'
 empty_msg db 'You input nothing',13,10,'$'
-zero_msg db 'Number can not start with zero',13,10,'$'
-symbol_msg db 'Input contains symbols. Not able to proceed',13,10,'$'
+zero_msg db 'ERROR Number can not start with zero',13,10,'$'
+symbol_msg db 'ERROR Input contains symbols. Not able to proceed',13,10,'$'
 
 .code 
 .286
@@ -45,11 +47,10 @@ call catch_exc
 test ah,ah
 jnz catch
 ;clear number
-push ax     ;push to keep 09h func
 xor ax,ax
 mov number,ax
-pop ax
 ;input Y
+mov ah,9
 mov dx,offset enter_y_msg 
 int 21h 
 call clear_binp_mr 
@@ -81,7 +82,15 @@ case4 :  ;other
 call case4_p
 ;
 break:
+mov dl,case_fail_flag
+test dl,dl
+jz convert
+mov ah, 9
+mov dx,offset case_fail_msg
+int 21h
+jmp catch
 ;
+convert:
 lea di, result_string
 call convert_whole_part
 test dl,dl
@@ -119,6 +128,10 @@ mov ax,x
 call ax_sqr
 mov bx,25
 mul bx
+jc c1_catch
+ret
+c1_catch:
+inc case_fail_flag
 ret
 case1_p endp
 
@@ -128,15 +141,21 @@ xor bx,bx
 mov ax,y
 call ax_sqr
 imul ax,5
+jc c2_catch
 mov bx,ax ;put divisor in bx
 xor ax,ax ;clear ax for dividend
 mov ax,x
 imul ax,38
+jc c2_catch
+jo c2_catch
 test ax,ax
 jns division
 cwd
 division:
 idiv bx
+ret
+c2_catch:
+inc case_fail_flag
 ret
 case2_p endp
 
@@ -159,15 +178,18 @@ case4_p endp
 
 ;exp block
 ax_cqb proc stdcall uses bx
+xor bx,bx
 mov bx,ax
 call ax_sqr
 imul bx
 ret
 ax_cqb endp
 
-ax_sqr proc stdcall uses bx
-mov bx,ax
-imul bx
+ax_sqr proc
+imul ax
+jnc exit_sqr
+inc case_fail_flag
+exit_sqr:
 ret
 ax_sqr endp
 ;input block start
@@ -292,6 +314,7 @@ clear_binp_mr proc ;binp = before input
  mov input_zero_flag,al 
  mov input_symbol_flag,al
  mov input_empty_flag,al
+ mov case_fail_flag,al
  ret
 clear_binp_mr endp
 
