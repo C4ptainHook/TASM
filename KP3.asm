@@ -1,11 +1,12 @@
 .model small
 
-.stack 200h
+.stack 64
 
 .data 
-result_string db 30 dup ('$')
+result_string db 60 dup ('$')
 NEG_LIM equ 32768
-POS_LIM equ 32767
+POS_LIM equ 65535
+FRAC_LIM equ 50
 input_buffer db 7,?,7 dup('?')
 result db 10,'Result: ','$'
 number dw 0
@@ -17,11 +18,13 @@ input_zero_flag db 0
 input_empty_flag db 0
 input_symbol_flag db 0
 case_fail_flag db 0
-enter_x_msg db 13,10,'Enter a X number [-32768 <= value <= 32767]',13,10,'$'
-enter_y_msg db 13,10,'Enter a Y number [-32768 <= value <= 32767]',13,10,'$'
+result_sign_flag db 0
+x_sign_flag db 0
+enter_x_msg db 13,10,'Enter a X number [-32768 <= value <= 65535]',13,10,'$'
+enter_y_msg db 13,10,'Enter a Y number [-32768 <= value <= 65535]',13,10,'$'
 continue_msg db 13,10,'Try again. Press 1 = Yes, Else = No',13,10,'$'
 overflow_msg db 'WARNING You entered value out of bounds [-32768 <= value <= 32767]',13,10,'$'
-case_fail_msg db 'WARNING Value out of bounds [-32768 <= value <= 32767] appeared in calculations',10,'Consider another input values...',13,10,'$'
+case_fail_msg db 10,'WARNING Value out of bounds [-32768 <= value <= 32767] appeared in calculations',10,'Consider another input values...',13,10,'$'
 empty_msg db 'You input nothing',13,10,'$'
 zero_msg db 'ERROR Number can not start with zero',13,10,'$'
 symbol_msg db 'ERROR Input contains symbols. Not able to proceed',13,10,'$'
@@ -36,6 +39,9 @@ mov ds, ax
 mov es, ax ;for chain manipulation commands
 push ds
 call clear_binp_mr
+mov ax,38
+mov bx,1724
+mul bx
 ;input X
 mov ah,9 
 mov dx,offset enter_x_msg 
@@ -43,19 +49,19 @@ int 21h
 call input
 mov bx, number
 mov x,bx
+mov al,input_sign_flag
+or x_sign_flag,al
 call catch_exc
 test ah,ah
 jnz catch
-;clear number
-xor ax,ax
-mov number,ax
 ;input Y
 mov ah,9
 mov dx,offset enter_y_msg 
 int 21h 
-call clear_binp_mr 
+call clear_mr 
 call input
 mov bx, number
+test bx,bx
 mov y,bx
 xor dx,dx ;clean dx from msg
 ;input exception handling
@@ -65,8 +71,8 @@ jnz catch
 ;switch (based on X and Y)
 cmp y,0
 je case1
-jl case2
 jg case3
+jl case2
 case1 :  ;y = 0
 call case1_p
 jmp break
@@ -82,6 +88,7 @@ case4 :  ;other
 call case4_p
 ;
 break:
+push dx
 mov dl,case_fail_flag
 test dl,dl
 jz convert
@@ -91,6 +98,7 @@ int 21h
 jmp catch
 ;
 convert:
+pop dx
 lea di, result_string
 call convert_whole_part
 test dl,dl
@@ -136,28 +144,79 @@ ret
 case1_p endp
 
 case2_p proc
-xor ax,ax
-xor bx,bx
-mov ax,y
-call ax_sqr
-imul ax,5
-jc c2_catch
-mov bx,ax ;put divisor in bx
-xor ax,ax ;clear ax for dividend
 mov ax,x
-imul ax,38
-jc c2_catch
-jo c2_catch
 test ax,ax
-jns division
+call test_x_sign
+imul ax,38
+jz test_positive1
+inc result_sign_flag
+jo c2_catch
+test_positive1:
+jc c2_catch
+jz division1 ;primary division of 38x/5
+cwd
+division1:
+mov bx,5
+idiv bx
+mov bx,ax
+mov ax,y
+call ax_sqr ;get y^2 in ax
+test dx,dx ;check if result not int and dx has some remainder
+jz process_as_integer
+;here process as fraction e.g 7/5 ax = 1, dx = 2
+push dx ;save potential remainder, because imul will erase dx
+call test_x_sign
+imul bx ;after in ax will be a product of whole part and y^2
+pop dx ;restore remainder
+jz test_positive2
+jo c2_catch
+test_positive2:
+jc c2_catch
+push ax ;save calculated whole part
+mov ax,y 
+call ax_sqr ;prepare multiplier for float part in dx
+imul dx
+jz test_positive3
+jo c2_catch
+test_positive3:
+jc c2_catch
+jz division
 cwd
 division:
+mov bx,5
 idiv bx
+pop bx ;get back ax (whole part)
+jz test_positive4
+add ax,bx
+jo c2_catch
+mov bx,5
+ret
+test_positive4:
+add ax,bx
+jc c2_catch
+mov bx,5
+ret
+process_as_integer: ;just multiply by y^2 
+call test_x_sign
+imul bx
+jz test_positive5
+jo c2_catch
+xor dx,dx
+test_positive5:
+jc c2_catch
+xor dx,dx
 ret
 c2_catch:
 inc case_fail_flag
 ret
 case2_p endp
+
+test_x_sign proc stdcall uses ax
+xor ax,ax
+mov al,x_sign_flag
+test al,al
+ret
+test_x_sign endp
 
 case3_p proc 
 xor ax,ax
@@ -185,7 +244,7 @@ imul bx
 ret
 ax_cqb endp
 
-ax_sqr proc
+ax_sqr proc stdcall uses dx 
 imul ax
 jnc exit_sqr
 inc case_fail_flag
@@ -238,9 +297,13 @@ input_exist:
  ja not_a_number 
  sub bl, '0' ;Get number from char
  mov ax,number
- imul ax,10
+ push bx
+ mov bx,10
+ mul bx
  jc overfl
+ pop bx
  add ax,bx
+ jc overfl
  jmp no_overflow
 overfl:
  call input_ovf_exc
@@ -286,15 +349,6 @@ input_ovf_exc proc
  input_ovf_exc endp
  ;input block end
  
-clear_mr proc ;Clear ax,bx,cx,dx
-  xor ax,ax
-  xor bx,bx
-  xor cx,cx
-  xor dx,dx
-  xor di,di
-  ret
-clear_mr endp
-
 catch_exc proc 
 mov al,input_zero_flag
 mov ah,input_ovf_flag
@@ -305,29 +359,42 @@ mov al,input_empty_flag
 or ah,al
 ret
 catch_exc endp
+ 
+clear_mr proc ;Clear ax,bx,cx,dx
+  xor ax,ax
+  xor bx,bx
+  xor cx,cx
+  xor dx,dx
+  xor di,di
+  mov input_sign_flag,al 
+  mov input_ovf_flag,al 
+  mov input_zero_flag,al 
+  mov input_symbol_flag,al
+  mov input_empty_flag,al
+  mov case_fail_flag,al
+  mov number,ax
+  ret
+clear_mr endp
 
 clear_binp_mr proc ;binp = before input
  call clear_mr ;Clean
- mov number,ax
- mov input_sign_flag,al 
- mov input_ovf_flag,al 
- mov input_zero_flag,al 
- mov input_symbol_flag,al
- mov input_empty_flag,al
- mov case_fail_flag,al
+ mov result_sign_flag,al
+ mov x,ax
+ mov y,ax
  ret
 clear_binp_mr endp
 
 ; Quotient to decimal
 ; Quotient = value in AX after div/idiv
 convert_whole_part proc stdcall uses ax bx cx dx    
-    or ax,ax
-    jns skip_minus
-    push ax
-    mov al, '-'
-    stosb
-    pop ax
-    neg ax
+   mov dl,result_sign_flag
+   test dl,dl
+   jz skip_minus
+   push ax
+   mov al, '-'
+   stosb
+   pop ax
+   neg ax
   skip_minus:
     mov bx, 10                          ; Prepare divisor value
     xor cx, cx                          ; Clean counter of numbers
@@ -350,7 +417,7 @@ convert_whole_part proc stdcall uses ax bx cx dx
 ; Remainder to decimal
 ; Remainder = numbers after period .000, stored in DX after div/idiv
 convert_float_part proc stdcall uses ax bx cx dx    
-    mov cx, 20                          ; limit of fractional digits
+    mov cx, FRAC_LIM                          ; limit of fractional digits
     @@LBL1:
     mov ax, dx                          ; Move remainder to AX
     test ax,ax
