@@ -39,9 +39,6 @@ mov ds, ax
 mov es, ax ;for chain manipulation commands
 push ds
 call clear_binp_mr
-mov ax,38
-mov bx,1724
-mul bx
 ;input X
 mov ah,9 
 mov dx,offset enter_x_msg 
@@ -143,21 +140,32 @@ inc case_fail_flag
 ret
 case1_p endp
 
-case2_p proc
+case2_p proc stdcall uses cx
 mov ax,x
 test ax,ax
 call test_x_sign
-imul ax,38
 jz test_positive1
 inc result_sign_flag
-jo c2_catch
+imul ax,38
+jno prepare_divisor1
+jmp c2_catch
 test_positive1:
-jc c2_catch
+push bx
+mov bx,38
+mul bx
+pop bx
+jnc prepare_divisor1 
+jmp c2_catch
+prepare_divisor1:
+mov bx,5
+call test_x_sign
 jz division1 ;primary division of 38x/5
 cwd
-division1:
-mov bx,5
 idiv bx
+jmp y_starts
+division1:
+div bx
+y_starts:
 mov bx,ax
 mov ax,y
 call ax_sqr ;get y^2 in ax
@@ -165,27 +173,43 @@ test dx,dx ;check if result not int and dx has some remainder
 jz process_as_integer
 ;here process as fraction e.g 7/5 ax = 1, dx = 2
 push dx ;save potential remainder, because imul will erase dx
+inc cx
 call test_x_sign
-imul bx ;after in ax will be a product of whole part and y^2
-pop dx ;restore remainder
 jz test_positive2
+imul bx ;after in ax will be a product of whole part and y^2
 jo c2_catch
+jmp restore_remainder
 test_positive2:
+mul bx ;after in ax will be a product of whole part and y^2
 jc c2_catch
+restore_remainder:
+pop dx ;restore remainder
+dec cx
 push ax ;save calculated whole part
+inc cx
 mov ax,y 
 call ax_sqr ;prepare multiplier for float part in dx
-imul dx
+call test_x_sign
 jz test_positive3
+imul dx
 jo c2_catch
+jmp prepare_divisor2
 test_positive3:
+mul dx
 jc c2_catch
-jz division
-cwd
-division:
+prepare_divisor2:
 mov bx,5
+call test_x_sign
+jz division2
+cwd
 idiv bx
+jmp retrieve_whole_part
+division2:
+div bx
+retrieve_whole_part:
 pop bx ;get back ax (whole part)
+dec cx
+call test_x_sign
 jz test_positive4
 add ax,bx
 jo c2_catch
@@ -198,16 +222,21 @@ mov bx,5
 ret
 process_as_integer: ;just multiply by y^2 
 call test_x_sign
-imul bx
 jz test_positive5
+imul bx
 jo c2_catch
 xor dx,dx
+ret
 test_positive5:
+mul bx
 jc c2_catch
 xor dx,dx
 ret
 c2_catch:
 inc case_fail_flag
+clear_stack:
+pop dx
+loop clear_stack
 ret
 case2_p endp
 
@@ -224,7 +253,10 @@ xor bx,bx
 mov bx,y
 mov ax,x
 call ax_cqb
-imul ax,6
+push dx
+mov dx,6
+mul dx
+pop dx
 div bx
 ret
 case3_p endp
@@ -420,12 +452,15 @@ convert_float_part proc stdcall uses ax bx cx dx
     mov cx, FRAC_LIM                          ; limit of fractional digits
     @@LBL1:
     mov ax, dx                          ; Move remainder to AX
-    test ax,ax
-    jns skip_deneg
+    mov dh,0
+    mov dl,result_sign_flag
+    test dx,dx
+    jz skip_deneg
     neg ax
 skip_deneg:
-    xor dx, dx
-    imul ax, 10
+    mov dx,10
+    mul dx
+    xor dx,dx
     div bx
     or al, 00110000b                    ; Conversion to ASCII = ADD '0'
     stosb                               ; Append char to the postion by es:di ptr
