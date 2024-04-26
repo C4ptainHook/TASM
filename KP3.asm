@@ -20,10 +20,11 @@ input_symbol_flag db 0
 case_fail_flag db 0
 result_sign_flag db 0
 x_sign_flag db 0
+y_sign_flag db 0
 enter_x_msg db 13,10,'Enter a X number [-32768 <= value <= 65535]',13,10,'$'
 enter_y_msg db 13,10,'Enter a Y number [-32768 <= value <= 65535]',13,10,'$'
 continue_msg db 13,10,'Try again. Press 1 = Yes, Else = No',13,10,'$'
-overflow_msg db 'WARNING You entered value out of bounds [-32768 <= value <= 32767]',13,10,'$'
+overflow_msg db 'WARNING You entered value out of bounds [-32768 <= value <= 65535]',13,10,'$'
 case_fail_msg db 10,'WARNING Value out of bounds [-32768 <= value <= 32767] appeared in calculations',10,'Consider another input values...',13,10,'$'
 empty_msg db 'You input nothing',13,10,'$'
 zero_msg db 'ERROR Number can not start with zero',13,10,'$'
@@ -50,8 +51,10 @@ mov al,input_sign_flag
 or x_sign_flag,al
 call catch_exc
 test ah,ah
-jnz catch
+jz input_y
+jmp catch
 ;input Y
+input_y:
 mov ah,9
 mov dx,offset enter_y_msg 
 int 21h 
@@ -60,6 +63,8 @@ call input
 mov bx, number
 test bx,bx
 mov y,bx
+mov al,input_sign_flag
+or y_sign_flag,al
 xor dx,dx ;clean dx from msg
 ;input exception handling
 call catch_exc
@@ -68,8 +73,10 @@ jnz catch
 ;switch (based on X and Y)
 cmp y,0
 je case1
-jg case3
-jl case2
+mov al,y_sign_flag
+test al,al
+jz case3
+jnz case2
 case1 :  ;y = 0
 call case1_p
 jmp break
@@ -411,6 +418,7 @@ clear_mr endp
 clear_binp_mr proc ;binp = before input
  call clear_mr ;Clean
  mov result_sign_flag,al
+ mov x_sign_flag,al
  mov x,ax
  mov y,ax
  ret
@@ -448,7 +456,8 @@ convert_whole_part proc stdcall uses ax bx cx dx
     
 ; Remainder to decimal
 ; Remainder = numbers after period .000, stored in DX after div/idiv
-convert_float_part proc stdcall uses ax bx cx dx    
+convert_float_part proc stdcall uses eax ebx ecx edx 
+   .386   
     mov cx, FRAC_LIM                          ; limit of fractional digits
     @@LBL1:
     mov ax, dx                          ; Move remainder to AX
@@ -459,14 +468,15 @@ convert_float_part proc stdcall uses ax bx cx dx
     neg ax
 skip_deneg:
     mov dx,10
-    mul dx
-    xor dx,dx
-    div bx
+    mul edx
+    xor edx,edx
+    div ebx
     or al, 00110000b                    ; Conversion to ASCII = ADD '0'
     stosb                               ; Append char to the postion by es:di ptr
     test dx, dx
     loopnz @@LBL1                       ; loop if ZF == 0 ( by test) and CX <> 0
     mov byte ptr es:[di], '$'           ; End of string char for 21h int
     ret
+    .286
     convert_float_part endp
 end main
