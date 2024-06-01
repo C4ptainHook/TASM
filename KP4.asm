@@ -7,9 +7,12 @@ NEG_LIM equ 32768
 POS_LIM equ 32767
 MAX_SIZE equ 64
 input_buffer db 7,?,7 dup('?')
+number dw 0
+;arr
 main_array dw MAX_SIZE dup(0)
 clone_array dw MAX_SIZE dup(0)
-number dw 0
+arr_size dw 0
+STEP equ 2
 ;input
 input_sign_flag db 0
 input_ovf_flag db 0
@@ -30,19 +33,25 @@ wrong_choice_war db 'WARNING. No such option',13,10,'$'
 case_fail_exc db 255 dup('$')
 wrong_array_size_exc db 13,10,'Wrong array size. Can be [1-64]',13,10,'$'
 wase equ $-wrong_array_size_exc-1
+sum_ovf_exc db 13,10,'ERROR During sum proccess encountered overflow. Consider another array',13,10,'$'
 ;UI
 ;menu
 new_arr_msg db 13,10,'1. Enter NEW array',13,'$'
 sum_msg db 13,10,'2. Find SUM of the elements',13,'$'
 min_msg db 13,10,'3. Find MIN of the elements',13,'$'
 sort_msg db 13,10,'4. SORT the array',13,10,'$'
+exit_msg db 13,10,'5. Exit program',13,10,'$'
 ;cases
 array_size_msg db 13,10,'Input array size [1-64]',13,10,'$'
+new_el_msg db 13,10,'Input new element [-32768 <= element <= 32767]',13,10,'$'
+result_msg db 13,10,'Result: ','$'
 ;repeat
 repeat_msg db 255 dup('$')
 continue_msg db 13,10,'TRY AGAIN? Press 1 = YES, Else = NO',13,10,'$'
 rep_size_msg db 13,10,'Do you want to input array size again. 1 = YES, Else = Back to menu',13,10,'$'
 rsmg equ $-rep_size_msg-1
+rep_new_el_msg db 13,10,'Do you want to input the element again. 1 = YES, Else = Back to menu',13,10,'$'
+rnmg equ $-rep_new_el_msg-1
 .code 
 .286
 main proc
@@ -52,12 +61,13 @@ mov ax, @data
 mov ds, ax
 mov es, ax ;for chain manipulation commands
 push ds
+start:
 call clear_restart_mr
 call print_menu
 call validate_case_choice
 call catch_exc
 test ah,ah
-jnz catch
+jnz start
 ;switch (based on X and Y)
 mov al, byte ptr number 
 cmp al,1
@@ -68,6 +78,8 @@ cmp al,3
 je case3
 cmp al,4
 je case4
+cmp al,5
+je exit
 case1 :  ;New array
 call case1_p
 jmp break
@@ -80,15 +92,7 @@ jmp break
 case4 :  ;SORT
 call case4_p
 break:
-catch:
-mov ah,9 
-mov dx,offset continue_msg 
-int 21h 
-mov ah,01h 
-int 21h 
-cmp al,'1'
-jne exit
-jmp restart
+jmp start
 exit:
 .exit
 main endp
@@ -121,11 +125,9 @@ lea dx,array_size_msg
 int 21h
 call clear_mr
 call input
-mov ax,number
 call catch_exc
 test ah,ah
 jnz catch_case
-mov ax,number
 cmp number,1
 jl catch_case_double
 cmp number,MAX_SIZE
@@ -144,15 +146,65 @@ mov cl,rsmg
 call copy_msg_string
 call handle_repeat_msg
 call clear_universal_string
-cmp al,'1'
+cmp al,'1' ;handle repeat (1 line before) invokes 01h proc
 je input_arr_size_again
 proceed:
-
+mov ax, number
+mov arr_size,ax
+mov cx,arr_size
+fill_arraye:
+input_elem_again:
+mov ah, 09h
+lea dx,new_el_msg
+int 21h
+call clear_mr
+call input
+call catch_exc
+test ah,ah
+jz next
+push cx
+lea si,rep_new_el_msg
+mov cl,rnmg
+call copy_msg_string
+call handle_repeat_msg
+call clear_universal_string
+cmp al,'1' 
+pop cx
+je input_elem_again
+ret ;exit from proc
+next:
+mov ax,number
+mov main_array[bx],ax
+add bx,STEP
+loop fill_arraye
 ret
 case1_p endp
 
 case2_p proc
-
+xor ax,ax
+mov cx, arr_size
+lea bx,main_array
+sum:
+mov dx,[bx]
+add bx,STEP
+add ax,dx
+jo case_catch
+loop sum
+push ax
+mov ah,09h
+lea dx, result_msg
+int 21h
+pop ax
+call print
+mov al,13
+int 29h
+mov al,10
+int 29h
+ret
+case_catch:
+mov ah,09h
+lea dx,sum_ovf_exc
+int 21h
 ret
 case2_p endp
 
@@ -167,7 +219,7 @@ ret
 case4_p endp
 
 ;input block start
-input proc stdcall uses ax bx cx dx
+input proc stdcall uses ax bx cx dx si di
  xor ax,ax
  mov ah,10 ;Prepare 10-th function
  mov dx,offset input_buffer ;point to buffer to fill later
@@ -296,12 +348,8 @@ int 21h
 ret
 handle_repeat_msg endp
 
-clear_mr proc ;Clear ax,bx,cx,dx
+clear_mr proc stdcall uses ax ;Clear ax,bx,cx,dx
   xor ax,ax
-  xor bx,bx
-  xor cx,cx
-  xor dx,dx
-  xor di,di
   mov input_sign_flag,al 
   mov input_ovf_flag,al 
   mov input_zero_flag,al 
@@ -324,11 +372,57 @@ int 21h
 ret
 print_menu endp
 
+print proc
+cmp ax,0
+jge skip_minus
+push ax
+mov al, '-'
+int 29h
+pop ax
+neg ax
+skip_minus:
+push cx
+mov bx, 10                          
+xor cx, cx                          
+parse_el:
+xor dx, dx                          
+div bx                              
+push dx                             
+inc cx                              
+test ax, ax                         
+jnz parse_el                        
+print_num_inner:
+pop ax                              
+or al, 00110000b  ; Conversion to ASCII = ADD '0'
+int 29h                             
+loop print_num_inner 
+pop cx 
+ret
+print endp
+
+print_1d_arr proc stdcall uses ax bx cx dx  
+lea si,main_array
+cld
+mov cx,arr_size
+mov al,10
+int 29h
+print_array:
+cmp cx,arr_size
+je skip_sep 
+mov al,','
+int 29h
+skip_sep:
+lodsw
+call print                    
+loop print_array
+ret
+print_1d_arr endp
+
 validate_case_choice proc 
 call input
 cmp number,1
 jl raise
-cmp number,4
+cmp number,5
 jg raise
 ret
 raise:
@@ -341,6 +435,12 @@ validate_case_choice endp
 
 clear_restart_mr proc 
  call clear_mr ;Clean
+  xor ax,ax
+  xor bx,bx
+  xor cx,cx
+  xor dx,dx
+  xor di,di
+  xor si,si
  ret
 clear_restart_mr endp
  
