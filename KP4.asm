@@ -10,8 +10,8 @@ input_buffer db 7,?,7 dup('?')
 number dw 0
 ;arr
 main_array dw MAX_SIZE dup(0)
-clone_array dw MAX_SIZE dup(0)
 arr_size dw 0
+array_initialized db 0
 STEP equ 2
 ;input
 input_sign_flag db 0
@@ -29,6 +29,8 @@ zero_exc db 'ERROR Number can not start with zero',13,10,'$'
 symbol_exc db 'ERROR Input contains symbols. Not able to proceed',13,10,'$'
 ;menu
 wrong_choice_war db 'WARNING. No such option',13,10,'$'
+uninitialized_war db 'WARNING. Other options are hidden. Create your array firstly.',13,10,'$'
+init_violated_flag db 0
 ;cases
 case_fail_exc db 255 dup('$')
 wrong_array_size_exc db 13,10,'Wrong array size. Can be [1-64]',13,10,'$'
@@ -39,8 +41,9 @@ sum_ovf_exc db 13,10,'ERROR During sum proccess encountered overflow. Consider a
 new_arr_msg db 13,10,'1. Enter NEW array',13,'$'
 sum_msg db 13,10,'2. Find SUM of the elements',13,'$'
 min_msg db 13,10,'3. Find MIN of the elements',13,'$'
-sort_msg db 13,10,'4. SORT the array',13,10,'$'
-exit_msg db 13,10,'5. Exit program',13,10,'$'
+sort_msg db 13,10,'4. SORT the array',13,'$'
+print_msg db 13,10,'5. PRINT array',13,'$'
+exit_msg db 13,10,'6. Exit program',13,10,'$'
 ;cases
 array_size_msg db 13,10,'Input array size [1-64]',13,10,'$'
 new_el_msg db 13,10,'Input new element [-32768 <= element <= 32767]',13,10,'$'
@@ -72,6 +75,11 @@ jnz start
 mov al, byte ptr number 
 cmp al,1
 je case1
+cmp al,6
+je exit
+mov ah, init_violated_flag
+test ah,ah
+jnz start
 cmp al,2
 je case2
 cmp al,3
@@ -79,7 +87,7 @@ je case3
 cmp al,4
 je case4
 cmp al,5
-je exit
+je case5
 case1 :  ;New array
 call case1_p
 jmp break
@@ -91,6 +99,9 @@ call case3_p
 jmp break
 case4 :  ;SORT
 call case4_p
+jmp break
+case5 :  ;PRINT
+call case5_p
 break:
 jmp start
 exit:
@@ -146,7 +157,7 @@ mov cl,rsmg
 call copy_msg_string
 call handle_repeat_msg
 call clear_universal_string
-cmp al,'1' ;handle repeat (1 line before) invokes 01h proc
+cmp al,'1'                 ;handle repeat (1 line before) invokes 01h proc
 je input_arr_size_again
 proceed:
 mov ax, number
@@ -171,12 +182,14 @@ call clear_universal_string
 cmp al,'1' 
 pop cx
 je input_elem_again
-ret ;exit from proc
+ret                       ;exit from proc
 next:
 mov ax,number
 mov main_array[bx],ax
 add bx,STEP
 loop fill_arraye
+inc array_initialized
+mov init_violated_flag,0
 ret
 case1_p endp
 
@@ -209,14 +222,61 @@ ret
 case2_p endp
 
 case3_p proc 
-
+xor ax,ax
+mov cx,arr_size
+lea si,main_array
+cld
+mov bx,main_array
+compare_another:
+lodsw
+cmp bx,ax
+jg reassign
+dec cx
+jcxz result
+jmp compare_another
+result:
+mov ah,09h
+lea dx, result_msg
+int 21h
+mov ax,bx
+call print
+mov al,13
+int 29h
+mov al,10
+int 29h
 ret
+reassign:
+mov bx,ax
+dec cx
+jcxz result
+jmp compare_another
 case3_p endp
 
-case4_p proc
-
+case4_p proc     ;plain bubble sort
+mov dx, arr_size ;dx as i
+dec dx           ;need n - 1
+oloop:  
+mov cx, arr_size ;cx as j
+dec cx
+lea si, main_array
+iloop:
+mov al,[si]
+cmp al,[si+2]
+jl no_swap
+xchg al,[si+2]  ;swaps values by address
+mov [si],al
+no_swap:
+add si,2
+loop iloop
+dec dx
+jnz oloop
 ret
 case4_p endp
+
+case5_p proc
+call print_1d_arr
+ret
+case5_p endp
 
 ;input block start
 input proc stdcall uses ax bx cx dx si di
@@ -359,16 +419,25 @@ clear_mr proc stdcall uses ax ;Clear ax,bx,cx,dx
   ret
 clear_mr endp
 
-print_menu proc stdcall uses ax dx
-mov ah,9
+print_menu proc stdcall uses ax bx dx
+mov ah,09h
 lea dx, new_arr_msg
 int 21h
+mov bl, array_initialized
+test bl,bl
+jz print_uninit
 lea dx, sum_msg
 int 21h
 lea dx, min_msg
 int 21h
 lea dx, sort_msg
 int 21h
+lea dx, print_msg
+int 21h
+print_uninit:
+lea dx, exit_msg
+int 21h
+ret
 ret
 print_menu endp
 
@@ -418,18 +487,37 @@ loop print_array
 ret
 print_1d_arr endp
 
-validate_case_choice proc 
+validate_case_choice proc stdcall uses ax
 call input
+mov al, array_initialized
+test al,al
+jnz move_on
+mov ah,1
+mov al,6
+xor ah,byte ptr number
+xor al,byte ptr number
+test ah,ah
+jz allow
+test al,al
+jz allow
+jmp raise1
+move_on:
 cmp number,1
-jl raise
-cmp number,5
-jg raise
+jl raise2
+cmp number,6
+jg raise2
 ret
-raise:
+raise1:
+mov ah,9
+lea dx, uninitialized_war
+int 21h
+inc init_violated_flag
+ret
+raise2:
 mov ah,9
 lea dx, wrong_choice_war
 int 21h
-inc input_ovf_flag
+allow:
 ret
 validate_case_choice endp
 
